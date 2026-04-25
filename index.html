@@ -93,19 +93,6 @@
     padding: 6px 14px; font-size: 13px; color: #555; cursor: pointer;
   }
   #clear-btn:hover { background: #f5f5f5; }
-  #format-filter {
-    display: flex; flex-wrap: wrap; gap: 6px 12px;
-    padding: 0 16px 8px; flex-shrink: 0;
-  }
-  #format-filter label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 13px; color: #333; cursor: pointer; white-space: nowrap;
-  }
-  .filter-ctrl {
-    font-size: 12px; color: #1a7c3e; background: none; border: none;
-    padding: 0; cursor: pointer; text-decoration: underline; white-space: nowrap;
-  }
-  .filter-ctrl:hover { color: #14612f; }
   #results-status {
     padding: 0 16px 8px; font-size: 13px; color: #666; flex-shrink: 0;
   }
@@ -234,7 +221,6 @@
     <h2 id="results-title">Results</h2>
     <button id="clear-btn">Clear</button>
   </div>
-  <div id="format-filter" style="display:none"></div>
   <div id="results-status"></div>
   <div id="results-list"></div>
 </div>
@@ -328,7 +314,6 @@ const EXAMPLE_DATA = `Available Copies\tLocation\tCall #
 
 // ── Globals ──
 let map, userLatLng = null, allMarkers = {}, resultMarkers = [], userMarker = null;
-let allParsed = [];
 
 // ── Init Map ──
 function initMap() {
@@ -466,35 +451,6 @@ function groupByLibrary(rows) {
 
 // ── Display Results ──
 function showResults(parsed) {
-  const seen = new Set();
-  const deduped = parsed.filter(r => {
-    const key = `${r.libraryName}|${r.section}|${r.callNumber}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  allParsed = deduped;
-
-  const formatFilter = document.getElementById('format-filter');
-  const formatCounts = deduped.reduce((acc, r) => { if (r.format) acc[r.format] = (acc[r.format] || 0) + 1; return acc; }, {}); 
-  const formats = Object.keys(formatCounts);
-  if (formats.length > 1) {
-    formatFilter.innerHTML =
-      '<button class="filter-ctrl" id="check-all-btn">Check all</button>' +
-      '<button class="filter-ctrl" id="clear-all-btn">Clear all</button>' +
-      formats.map(f => `<label><input type="checkbox" value="${f}" checked> ${f}</label>`).join('');
-    formatFilter.style.display = 'flex';
-  } else {
-    formatFilter.style.display = 'none';
-  }
-
-  renderResults(deduped);
-
-  document.getElementById('bottom-bar').style.display = 'none';
-  document.getElementById('results-panel').classList.add('visible');
-}
-
-function renderResults(rows) {
   // Clear old result markers
   resultMarkers.forEach(m => map.removeLayer(m));
   resultMarkers = [];
@@ -503,7 +459,7 @@ function renderResults(rows) {
   Object.values(allMarkers).forEach(m => m.setStyle({ fillColor: '#aaa', color: '#888', radius: 5, fillOpacity: 0.5 }));
 
   // Group by library, then compute distances
-  const grouped = groupByLibrary(rows);
+  const grouped = groupByLibrary(parsed);
   grouped.forEach(r => {
     if (r.library && userLatLng) {
       r.distance = distanceMiles(userLatLng.lat, userLatLng.lng, r.library.lat, r.library.lng);
@@ -613,6 +569,10 @@ function renderResults(rows) {
 
     resultsList.appendChild(row);
   });
+
+  // Show results panel, hide bottom bar
+  document.getElementById('bottom-bar').style.display = 'none';
+  document.getElementById('results-panel').classList.add('visible');
 }
 
 // Parse the HTML table that Aspen Discovery returns in its getCopyDetails JSON response.
@@ -717,22 +677,15 @@ async function init() {
     'var m=location.href.match(/GroupedWork\\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-[a-z]{3})?)/i);' +
     'if(!m){alert(\'Open a catalog item page first\');return;}' +
     'var id=m[1],' +
-    'fmts=[\'Book\',\'Large Print\',\'Spoken CD\',\'Playaway Audiobook\',\'Braille\',\'Blu-ray\',\'DVD or VCD\',\'Music CD\',\'Console Game\',\'3-D Object\'],' +
     'base=\'https://catalog.minlib.net\',' +
     'target=\'' + bookmarkletTarget + '\';' +
-    'Promise.all(fmts.map(function(fmt){' +
-      'return fetch(base+\'/GroupedWork/AJAX?method=getCopyDetails&id=\'+id+\'&recordId=\'+id+\'&format=\'+encodeURIComponent(fmt))' +
-        '.then(function(r){return r.json();})' +
-        '.then(function(j){' +
-          'if(!j.modalBody||/unable to find/i.test(j.modalBody))return null;' +
-          'return {format:fmt,html:j.modalBody};' +
-        '})' +
-        '.catch(function(){return null;});' +
-    '})).then(function(all){' +
-      'var found=all.filter(Boolean);' +
-      'if(!found.length){alert(\'No availability data found\');return;}' +
-      'window.open(target+\'#data=\'+encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(found))))));' +
-    '});' +
+    'fetch(base+\'/GroupedWork/AJAX?method=getCopyDetails&id=\'+id+\'&recordId=\'+id+\'&format=Book\')' +
+      '.then(function(r){return r.json();})' +
+      '.then(function(j){' +
+        'if(!j.modalBody||/unable to find/i.test(j.modalBody)){alert(\'No availability data found\');return;}' +
+        'window.open(target+\'#data=\'+encodeURIComponent(btoa(unescape(encodeURIComponent(j.modalBody)))));' +
+      '})' +
+      '.catch(function(){alert(\'No availability data found\');});' +
   '})();';
 
   const bottomBar = document.getElementById('bottom-bar');
@@ -740,21 +693,6 @@ async function init() {
   const pasteArea = document.getElementById('paste-area');
   const findBtn = document.getElementById('find-btn');
   const resultsPanel = document.getElementById('results-panel');
-
-  document.getElementById('format-filter').addEventListener('change', () => {
-    const checked = [...document.querySelectorAll('#format-filter input:checked')].map(cb => cb.value);
-    renderResults(allParsed.filter(r => !r.format || checked.includes(r.format)));
-  });
-
-  document.getElementById('format-filter').addEventListener('click', e => {
-    if (e.target.id === 'check-all-btn') {
-      document.querySelectorAll('#format-filter input').forEach(cb => cb.checked = true);
-      renderResults(allParsed);
-    } else if (e.target.id === 'clear-all-btn') {
-      document.querySelectorAll('#format-filter input').forEach(cb => cb.checked = false);
-      renderResults([]);
-    }
-  });
 
   const inputHint = document.getElementById('input-hint');
 
@@ -832,8 +770,6 @@ async function init() {
   document.getElementById('clear-btn').addEventListener('click', () => {
     resultsPanel.classList.remove('visible');
     bottomBar.style.display = 'flex';
-    allParsed = [];
-    document.getElementById('format-filter').style.display = 'none';
     pasteArea.value = '';
 
     // Reset markers
